@@ -99,6 +99,11 @@ func (s *Server) ticketView(t store.AuthTicket, now time.Time) ticketView {
 		}
 	}
 	s.mu.Unlock()
+	// A sign-in that timed out or was lost on restart leaves the ticket
+	// reusable; show it as not opened until someone starts again.
+	if view.Status == store.TicketAuthorizing && view.FlowStage == "" {
+		view.Status = store.TicketPending
+	}
 	return view
 }
 
@@ -269,6 +274,26 @@ func (s *Server) handleTicketPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+}
+
+// handleTicketAdminCallback lets the administrator paste a callback URL that
+// the recipient sent over chat, for a link that is mid sign-in.
+func (s *Server) handleTicketAdminCallback(w http.ResponseWriter, r *http.Request) {
+	ticket, err := s.store.TicketByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", "Could not load the authorization link")
+		return
+	}
+	if ticket == nil {
+		writeError(w, http.StatusNotFound, "ticket_not_found", "Authorization link not found")
+		return
+	}
+	t, entry, err := s.loadTicket(r.Context(), ticket.Token)
+	if err != nil || t == nil {
+		writeError(w, http.StatusInternalServerError, "database_error", "Could not load the authorization link")
+		return
+	}
+	s.handleTicketCallback(w, r, t, entry)
 }
 
 // ---- Public authorization page -----------------------------------------

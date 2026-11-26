@@ -69,7 +69,8 @@ function callbackError(message) {
     "open the discovery URL in the browser, then submit its callback URL": "你贴的是登录页面地址，请先在浏览器打开它完成登录，再贴跳转后的地址。",
     "upstream sign-in was rejected": "官方拒绝了这次登录，请重新开始。",
     "browser login expired; start a new login": "登录会话已超时，请点「开始登录」重新开始。",
-    "a callback is already being processed": "上一次提交还在处理中，请稍等。"
+    "a callback is already being processed": "上一次提交还在处理中，请稍等。",
+    "upstream login or account persistence failed; start a new login if the code was consumed": "换取登录凭证失败，多半是授权码已过期。请点「开始登录」从头再来一遍，最后一步拿到地址马上贴回来。"
   };
   return map[message] || message;
 }
@@ -84,6 +85,7 @@ function safeURL(raw) {
 }
 
 function render(s) {
+  queueMicrotask(() => focusPasteOnStageChange(s));
   $("status").textContent = statusText[s.status] || s.status;
   $("label").hidden = !s.label;
   $("label").textContent = s.label || "";
@@ -91,6 +93,7 @@ function render(s) {
   $("attempts").textContent = String(s.activations_left ?? "—");
 
   const done = s.status === "completed";
+  $("final-alert").hidden = !(s.status === "authorizing" && s.flow_stage === "authorize");
   $("done-panel").hidden = !done;
   $("steps-panel").hidden = done || s.status === "expired";
   if (done) {
@@ -115,7 +118,7 @@ function render(s) {
     li.className = i < current ? "done" : i === current || (stage === "authorize" && i === 3) ? "current" : "";
   }
   if (stage === "discovery") $("status").textContent = "第 1 步：打开官方登录页面登录，然后把跳转后的地址贴到下面。";
-  if (stage === "authorize") $("status").textContent = "第 2 步：打开授权页面确认授权，然后把跳转后的地址贴到下面。";
+  if (stage === "authorize") $("status").textContent = "第 2 步：打开授权页面确认授权，然后把跳转后打不开的 127.0.0.1 页面地址贴到下面。";
 }
 
 async function refresh() {
@@ -127,6 +130,14 @@ async function refresh() {
     $("steps-panel").hidden = true;
     showError(error.message);
   }
+}
+
+let lastStage = "";
+function focusPasteOnStageChange(s) {
+  const stage = s.status === "authorizing" ? s.flow_stage || "" : "";
+  if (stage && stage !== lastStage) $("callback").focus({ preventScroll: true });
+  if (stage === "authorize" && lastStage !== "authorize") $("final-alert").scrollIntoView({ behavior: "smooth", block: "start" });
+  lastStage = stage;
 }
 
 $("start").addEventListener("click", async () => {

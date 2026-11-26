@@ -153,6 +153,13 @@
                 <button id="copy-new-links" class="button" type="button" data-i18n="copyAll">Copy all</button>
               </div>
             </article>
+            <article id="ticket-callback-panel" class="panel callback-panel" hidden>
+              <div class="panel-heading"><div><h3 data-i18n="adminCallbackTitle">Paste a callback for this link</h3><p class="muted" data-i18n="adminCallbackHint">If the recipient sent you the localhost / 127.0.0.1 address from their browser, paste the full URL here. It works for both steps; codes expire within minutes.</p></div><code id="ticket-callback-id"></code></div>
+              <form id="ticket-callback-form" class="proxy-import">
+                <textarea id="ticket-callback-url" rows="3" autocomplete="off" spellcheck="false" required placeholder="http://127.0.0.1:18080/?code=…&amp;state=…"></textarea>
+                <div class="import-bar"><span id="ticket-callback-stage" class="muted"></span><button id="ticket-callback-cancel" class="button subtle" type="button" data-i18n="cancel">Cancel</button><button id="ticket-callback-submit" class="button primary" type="submit" data-i18n="submitCallback">Submit callback URL</button></div>
+              </form>
+            </article>
             <article class="panel table-panel">
               <div class="table-scroll"><table><thead><tr><th data-i18n="ticketLabelColumn">Label</th><th data-i18n="status">Status</th><th data-i18n="account">Account</th><th data-i18n="ticketExpiresColumn">Link expires</th><th data-i18n="attemptsLeft">Attempts left</th><th data-i18n="actions">Actions</th></tr></thead><tbody id="tickets-body"></tbody></table></div>
               <p id="tickets-empty" class="empty-state" data-i18n="noTickets" hidden>No authorization links yet.</p>

@@ -276,3 +276,6 @@ tbody tr:last-child td { border-bottom: none; }
 .check-fail { color: var(--danger); }
 .cell-sub { display: block; color: var(--muted); font-size: 12px; }
 .proxy-import { display: grid; gap: 12px; }
+.callback-panel { border-color: var(--warning-text); }
+.callback-panel .import-bar .button.subtle { margin-left: auto; }
+.callback-panel .import-bar .button.primary { margin-left: 0; }

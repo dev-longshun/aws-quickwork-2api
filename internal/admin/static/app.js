@@ -283,6 +283,15 @@ const translations = {
   ticketsCreated: ["Generated {count} link(s).", "已生成 {count} 个链接。"],
   ticketsPurged: ["Removed {count} link(s).", "已清理 {count} 个链接。"],
   ticketCopied: ["Link copied.", "链接已复制。"],
+  adminCallbackTitle: ["Paste a callback for this link", "代填回调地址"],
+  adminCallbackHint: ["If the recipient sent you the localhost / 127.0.0.1 address from their browser, paste the full URL here. It works for both steps; codes expire within minutes.", "同事把浏览器里那个打不开的 localhost / 127.0.0.1 页面地址发给你后，把完整地址贴在这里提交。两步都能代填；授权码几分钟就过期，越快越好。"],
+  fillCallback: ["Paste callback", "代填回调"],
+  cancel: ["Cancel", "取消"],
+  callbackStageDiscovery: ["Waiting for: step 1 address (…/callback?nonce=…)", "现在需要：第 1 步的地址（…/callback?nonce=…）"],
+  callbackStageAuthorize: ["Waiting for: final address (127.0.0.1:18080/?code=…)", "现在需要：最后一步的地址（127.0.0.1:18080/?code=…）"],
+  callbackNextStep: ["Step 1 accepted. Ask the recipient to open the authorization page from their link, then paste the final address.", "第 1 步已提交。让同事回到授权链接页面点「打开授权页面」完成授权，再把最后的地址发来。"],
+  callbackFailed: ["Not accepted: {message}", "提交失败：{message}"],
+  callbackCompleted: ["Authorized: {account}", "授权完成：{account}"],
   proxiesIntro: ["Accounts and authorization links can each use a proxy. Bind them on the Accounts page or when generating links.", "账号和授权链接都可以单独走代理：在账号管理里给账号绑定，或生成授权链接时选择。"],
   checkDirect: ["Check server IP", "检测服务器直连 IP"],
   checkAllProxies: ["Check all", "全部检测"],
@@ -498,6 +507,9 @@ function clearSession() {
   elements["proxy-list"].replaceChildren();
   state.tickets = [];
   state.proxyChecks = {};
+  state.callbackTicket = "";
+  elements["ticket-callback-url"].value = "";
+  elements["ticket-callback-panel"].hidden = true;
   elements["proxy-import-count"].textContent = "";
   elements["tickets-body"].replaceChildren();
   elements["ticket-proxy"].replaceChildren();
@@ -764,6 +776,12 @@ function renderTickets() {
     const attempts = textElement("td", ticket.status === "completed" ? "—" : `${ticket.activations_left} / ${ticket.max_activations}`);
     const actions = document.createElement("td");
     const wrap = textElement("div", "", "table-actions");
+    if (ticket.status === "authorizing") {
+      const fill = textElement("button", translate("fillCallback"), "button small subtle");
+      fill.type = "button";
+      fill.addEventListener("click", () => openTicketCallback(ticket));
+      wrap.append(fill);
+    }
     if (ticket.status === "pending" || ticket.status === "authorizing") {
       const copy = textElement("button", translate("copyTicket"), "button small subtle");
       copy.type = "button";
@@ -792,6 +810,73 @@ function renderTickets() {
   }));
   elements["tickets-empty"].hidden = tickets.length > 0;
 }
+
+function openTicketCallback(ticket) {
+  state.callbackTicket = ticket.id;
+  elements["ticket-callback-panel"].hidden = false;
+  setRawText(elements["ticket-callback-id"], `${ticket.label || ""} ${ticket.id}`.trim());
+  setTranslation(elements["ticket-callback-stage"], ticket.flow_stage === "discovery" ? "callbackStageDiscovery" : "callbackStageAuthorize");
+  elements["ticket-callback-url"].value = "";
+  elements["ticket-callback-panel"].scrollIntoView({ behavior: "smooth", block: "center" });
+  elements["ticket-callback-url"].focus({ preventScroll: true });
+}
+
+function callbackErrorText(error) {
+  const zh = {
+    "invalid callback URL": "这不是有效的地址，要复制浏览器地址栏的完整内容",
+    "discovery nonce mismatch": "这个地址不属于当前这次登录，让同事点「开始登录」重新来",
+    "OAuth state mismatch": "这个地址不属于当前这次登录，让同事点「开始登录」重新来",
+    "submit the discovery callback before the authorization callback": "现在还在第 1 步，需要先贴第 1 步的地址（…/callback?nonce=…）",
+    "open the authorize URL in the browser, then submit its callback URL": "贴的是授权页面地址，要先在浏览器打开完成授权，再贴跳转后的地址",
+    "open the discovery URL in the browser, then submit its callback URL": "贴的是登录页面地址，要先在浏览器打开完成登录，再贴跳转后的地址",
+    "upstream sign-in was rejected": "官方拒绝了这次登录，让同事重新开始",
+    "browser login expired; start a new login": "登录会话已超时，让同事点「开始登录」重新来",
+    "a callback is already being processed": "上一次提交还在处理中，稍等",
+    "upstream login or account persistence failed; start a new login if the code was consumed": "换取 token 失败，多半是授权码过期了，让同事点「开始登录」重新来",
+    "No sign-in is in progress; click Start sign-in first": "这个链接当前没有进行中的登录（超时或服务重启过），让同事点「开始登录」重新来"
+  };
+  return language === "zh-CN" ? zh[error.message] || error.message : error.message;
+}
+
+function closeTicketCallback() {
+  state.callbackTicket = "";
+  elements["ticket-callback-url"].value = "";
+  elements["ticket-callback-panel"].hidden = true;
+}
+
+elements["ticket-callback-cancel"].addEventListener("click", closeTicketCallback);
+
+elements["ticket-callback-form"].addEventListener("submit", async event => {
+  event.preventDefault();
+  const generation = state.generation;
+  const id = state.callbackTicket;
+  const url = elements["ticket-callback-url"].value.trim();
+  if (!id || !url) return;
+  const button = elements["ticket-callback-submit"];
+  button.disabled = true;
+  try {
+    const result = await requestJSON(`/api/tickets/${encodeURIComponent(id)}/callback`, { method: "POST", body: { url } });
+    if (!state.authenticated || generation !== state.generation) return;
+    elements["ticket-callback-url"].value = "";
+    if (result.status === "completed") {
+      closeTicketCallback();
+      await loadAccounts();
+      showMessage("callbackCompleted", "success", { account: result.account || "" });
+    } else {
+      setTranslation(elements["ticket-callback-stage"], result.flow_stage === "discovery" ? "callbackStageDiscovery" : "callbackStageAuthorize");
+      await loadTickets();
+      showMessage("callbackNextStep", "success");
+    }
+  } catch (error) {
+    if (state.authenticated && generation === state.generation) {
+      await loadTickets().catch(() => {});
+      if (error.code === "callback_failed" || error.code === "login_not_found") showMessage("callbackFailed", "warning", { message: callbackErrorText(error) });
+      else reportError(error);
+    }
+  } finally {
+    button.disabled = false;
+  }
+});
 
 elements["ticket-form"].addEventListener("submit", async event => {
   event.preventDefault();

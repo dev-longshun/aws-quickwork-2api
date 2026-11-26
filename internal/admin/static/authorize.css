@@ -35,3 +35,9 @@ textarea { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px soli
 .error { color: var(--err); margin: 16px 0 0; }
 .done-title { font-size: 20px; font-weight: 700; color: var(--ok); margin: 0 0 6px; }
 [hidden] { display: none !important; }
+.alert { margin: 0 0 20px; padding: 14px 16px; border-radius: 10px; border: 2px solid #e0a100; background: rgba(224, 161, 0, .12); }
+.alert p { margin: 0 0 8px; }
+.alert p:last-child { margin-bottom: 0; }
+.alert-title { font-size: 17px; font-weight: 700; color: #b77900; }
+.alert-en { color: var(--muted); font-size: 13px; }
+@media (prefers-color-scheme: dark) { .alert-title { color: #f5c04a; } }

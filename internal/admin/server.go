@@ -86,6 +86,7 @@ func NewServer(cfg *config.Config, st *store.Store, mgr *accounts.Manager, addrO
 	server.routes.HandleFunc("POST /api/tickets", server.handleTicketCreate)
 	server.routes.HandleFunc("POST /api/tickets/purge", server.handleTicketPurge)
 	server.routes.HandleFunc("DELETE /api/tickets/{id}", server.handleTicketDelete)
+	server.routes.HandleFunc("POST /api/tickets/{id}/callback", server.handleTicketAdminCallback)
 	server.routes.HandleFunc("GET /api/config", server.handleConfigGet)
 	server.routes.HandleFunc("PUT /api/config", server.handleConfigSave)
 	server.routes.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

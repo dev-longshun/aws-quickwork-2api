@@ -129,6 +129,15 @@ func (s *Store) TicketByToken(ctx context.Context, token string) (*AuthTicket, e
 	return t, err
 }
 
+// TicketByID returns nil, nil when the id is unknown.
+func (s *Store) TicketByID(ctx context.Context, id string) (*AuthTicket, error) {
+	t, err := scanTicket(s.db.QueryRowContext(ctx, `SELECT `+ticketColumns+` FROM auth_tickets WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return t, err
+}
+
 // CountOpenTickets counts tickets that can still be used.
 func (s *Store) CountOpenTickets(ctx context.Context, now time.Time) (int64, error) {
 	var n int64
