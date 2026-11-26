@@ -260,3 +260,9 @@ tbody tr:last-child td { border-bottom: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }
 }
+
+.ticket-grid { grid-template-columns: repeat(3, 1fr); }
+.ticket-new { margin-top: 16px; display: grid; gap: 8px; }
+.ticket-new textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+@media (max-width: 760px) { .ticket-grid { grid-template-columns: 1fr; } }
+.ticket-new .button { justify-self: start; }

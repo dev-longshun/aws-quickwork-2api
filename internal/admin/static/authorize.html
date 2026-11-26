@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="robots" content="noindex, nofollow">
+    <title>授权 Amazon Quick 账号</title>
+    <link rel="stylesheet" href="/assets/authorize.css">
+    <script src="/assets/authorize.js" defer></script>
+  </head>
+  <body>
+    <main class="card">
+      <p class="eyebrow">AMAZON QUICK · 账号授权</p>
+      <h1>把你的 Amazon Quick 账号授权进来</h1>
+      <p id="label" class="label" hidden></p>
+      <p id="status" class="status" role="status">正在读取链接状态…</p>
+
+      <section id="steps-panel" hidden>
+        <ol class="steps">
+          <li id="step-1"><strong>登录：</strong>点「开始登录」，在打开的官方页面用<strong>要授权的账号</strong>登录。</li>
+          <li id="step-2"><strong>第一次粘贴：</strong>登录后浏览器会跳到一个<strong>打不开的</strong> <code>localhost:18080/callback?…</code> 页面，这是正常的。把<strong>地址栏的完整地址</strong>复制下来，贴到下面提交。</li>
+          <li id="step-3"><strong>授权：</strong>提交后这里会出现「打开授权页面」，点开并确认授权。</li>
+          <li id="step-4"><strong>第二次粘贴：</strong>浏览器又会跳到打不开的 <code>127.0.0.1:18080/?code=…</code> 页面，同样复制完整地址贴回来，就完成了。</li>
+        </ol>
+
+        <div class="actions">
+          <button id="start" class="button primary" type="button">开始登录</button>
+          <a id="open-link" class="button primary" target="_blank" rel="noopener noreferrer" hidden>打开官方登录页面</a>
+          <button id="copy-link" class="button" type="button" hidden>复制链接</button>
+        </div>
+
+        <form id="callback-form" hidden>
+          <label for="callback">浏览器地址栏的完整地址</label>
+          <textarea id="callback" rows="3" autocomplete="off" spellcheck="false" placeholder="http://localhost:18080/callback?nonce=…  或  http://127.0.0.1:18080/?code=…&amp;state=…" required></textarea>
+          <button id="submit" class="button primary" type="submit">提交地址</button>
+          <p class="hint">登录会话 <span id="flow-expires">—</span> 前有效，超时点「开始登录」重新来一遍即可。</p>
+        </form>
+      </section>
+
+      <section id="done-panel" class="done" hidden>
+        <p class="done-title">✓ 授权完成</p>
+        <p id="done-account" class="muted"></p>
+        <p class="muted">可以关掉这个页面了。这个链接已经用过，不能再授权别的账号。</p>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+      <p class="fine-print">这个页面只能把你的账号授权进去，看不到任何其他数据。链接有效期至 <span id="ticket-expires">—</span>，剩余可尝试 <span id="attempts">—</span> 次。</p>
+    </main>
+  </body>
+</html>

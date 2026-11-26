@@ -255,7 +255,34 @@ const translations = {
   creditsNotReported: ["Credits not reported", "未上报积分"],
   creditsCoverage: ["Reported for {reported} / {calls} calls", "{reported} / {calls} 次调用上报"],
   partialCredits: ["Partial credit coverage", "积分覆盖不完整"],
-  creditAmount: ["{amount} {unit}", "{amount} {unit}"]
+  creditAmount: ["{amount} {unit}", "{amount} {unit}"],
+  authLinks: ["Authorization links", "授权链接"],
+  authLinksIntro: ["Send a link to whoever holds the account. They sign in on their own computer and the account joins the pool, without the console password.", "把链接发给管账号的人，对方在自己电脑上登录，账号就自动加进来，不需要管理密码。"],
+  purgeTickets: ["Remove used and expired", "清理已用和过期"],
+  generateLinks: ["Generate links", "生成授权链接"],
+  generateLinksHint: ["One link authorizes one account. The page walks the recipient through both callback pastes.", "一个链接授权一个账号，页面会一步步引导对方粘贴两次回调地址。"],
+  ticketCount: ["Number of links", "生成数量"],
+  ticketLabel: ["Label (optional)", "备注（选填）"],
+  ticketTTL: ["Valid for (days)", "有效期（天）"],
+  generate: ["Generate", "生成"],
+  newLinks: ["New links", "新生成的链接"],
+  copyAll: ["Copy all", "全部复制"],
+  ticketLabelColumn: ["Label", "备注"],
+  ticketExpiresColumn: ["Link expires", "链接到期"],
+  attemptsLeft: ["Attempts left", "剩余次数"],
+  noTickets: ["No authorization links yet.", "还没有授权链接。"],
+  ticketPending: ["Not opened", "待打开"],
+  ticketAuthorizing: ["Signing in", "登录中"],
+  ticketCompleted: ["Authorized", "已授权"],
+  ticketExpired: ["Expired", "已过期"],
+  ticketStageDiscovery: ["Signing in (step 1)", "登录中（第 1 步）"],
+  ticketStageAuthorize: ["Signing in (step 2)", "登录中（第 2 步）"],
+  copyTicket: ["Copy link", "复制链接"],
+  confirmDeleteTicket: ["Delete this authorization link? It will stop working immediately.", "删除这个授权链接？删除后链接立即失效。"],
+  confirmPurgeTickets: ["Remove all used and expired links?", "清理所有已用和过期的链接？"],
+  ticketsCreated: ["Generated {count} link(s).", "已生成 {count} 个链接。"],
+  ticketsPurged: ["Removed {count} link(s).", "已清理 {count} 个链接。"],
+  ticketCopied: ["Link copied.", "链接已复制。"]
 };
 const apiErrorTranslations = {
   invalid_credentials: "invalidCredentials",
@@ -381,7 +408,7 @@ const state = {
   loginRevision: 0,
   playgroundController: null
 };
-const pageTitles = { overview: "overview", accounts: "accounts", config: "settings", playground: "playground" };
+const pageTitles = { overview: "overview", accounts: "accounts", tickets: "authLinks", config: "settings", playground: "playground" };
 const initialDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
 
 function setTheme(dark) {
@@ -442,6 +469,11 @@ function clearSession() {
   elements["proxy-import-text"].value = "";
   elements["oauth-proxy"].replaceChildren();
   elements["proxy-list"].replaceChildren();
+  state.tickets = [];
+  elements["tickets-body"].replaceChildren();
+  elements["ticket-proxy"].replaceChildren();
+  elements["ticket-new-links"].value = "";
+  elements["ticket-new"].hidden = true;
   elements["oauth-link"].removeAttribute("href");
   elements["oauth-flow"].hidden = true;
   for (const id of ["start-login", "submit-callback", "check-login", "cancel-login"]) elements[id].disabled = false;
@@ -653,13 +685,131 @@ function makeAccountAction(label, action, account, danger = false) {
 
 async function loadAccounts() {
   const generation = state.generation;
-  const [data, proxyData] = await Promise.all([requestJSON("/api/accounts"), requestJSON("/api/proxies")]);
+  const [data, proxyData, ticketData] = await Promise.all([requestJSON("/api/accounts"), requestJSON("/api/proxies"), requestJSON("/api/tickets")]);
   if (!state.authenticated || generation !== state.generation) return;
   state.accounts = data.accounts || [];
   state.proxies = proxyData.proxies || [];
+  state.tickets = ticketData.tickets || [];
   renderProxies();
   renderAccounts();
+  renderTickets();
 }
+
+async function loadTickets() {
+  const generation = state.generation;
+  const data = await requestJSON("/api/tickets");
+  if (!state.authenticated || generation !== state.generation) return;
+  state.tickets = data.tickets || [];
+  renderTickets();
+}
+
+function ticketLink(ticket) {
+  return `${window.location.origin}${ticket.path}`;
+}
+
+async function copyText(text, messageKey) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("clipboard_unavailable");
+    await navigator.clipboard.writeText(text);
+    showMessage(messageKey, "success");
+  } catch {
+    showMessage("copyUnavailable", "warning");
+  }
+}
+
+function renderTickets() {
+  const tickets = state.tickets || [];
+  const statusKeys = { pending: "ticketPending", authorizing: "ticketAuthorizing", completed: "ticketCompleted", expired: "ticketExpired" };
+  const badgeKinds = { pending: "neutral", authorizing: "warning", completed: "", expired: "error" };
+  elements["tickets-body"].replaceChildren(...tickets.map(ticket => {
+    const row = document.createElement("tr");
+    const label = document.createElement("td");
+    label.append(textElement("div", ticket.label || "—", "account-label"), textElement("code", ticket.id));
+    const status = document.createElement("td");
+    let statusKey = statusKeys[ticket.status] || ticket.status;
+    if (ticket.status === "authorizing" && ticket.flow_stage === "discovery") statusKey = "ticketStageDiscovery";
+    if (ticket.status === "authorizing" && ticket.flow_stage === "authorize") statusKey = "ticketStageAuthorize";
+    status.append(textElement("span", translate(statusKey), `badge ${badgeKinds[ticket.status] ?? "neutral"}`));
+    const account = textElement("td", ticket.account_email || (ticket.account_id ? `#${ticket.account_id}` : "—"));
+    const expires = textElement("td", formatTime(ticket.expires_at));
+    const attempts = textElement("td", ticket.status === "completed" ? "—" : `${ticket.activations_left} / ${ticket.max_activations}`);
+    const actions = document.createElement("td");
+    const wrap = textElement("div", "", "table-actions");
+    if (ticket.status === "pending" || ticket.status === "authorizing") {
+      const copy = textElement("button", translate("copyTicket"), "button small subtle");
+      copy.type = "button";
+      copy.addEventListener("click", () => copyText(ticketLink(ticket), "ticketCopied"));
+      wrap.append(copy);
+    }
+    const remove = textElement("button", translate("delete"), "button small subtle danger");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      const generation = state.generation;
+      if (!window.confirm(translate("confirmDeleteTicket"))) return;
+      remove.disabled = true;
+      try {
+        await requestJSON(`/api/tickets/${encodeURIComponent(ticket.id)}`, { method: "DELETE" });
+        if (state.authenticated && generation === state.generation) await loadTickets();
+      } catch (error) {
+        if (state.authenticated && generation === state.generation) reportError(error);
+      } finally {
+        remove.disabled = false;
+      }
+    });
+    wrap.append(remove);
+    actions.append(wrap);
+    row.append(label, status, account, expires, attempts, actions);
+    return row;
+  }));
+  elements["tickets-empty"].hidden = tickets.length > 0;
+}
+
+elements["ticket-form"].addEventListener("submit", async event => {
+  event.preventDefault();
+  const generation = state.generation;
+  const button = elements["create-tickets"];
+  button.disabled = true;
+  try {
+    const result = await requestJSON("/api/tickets", { method: "POST", body: {
+      count: Number(elements["ticket-count"].value) || 1,
+      label: elements["ticket-label"].value,
+      ttl_hours: (Number(elements["ticket-ttl"].value) || 7) * 24,
+      provider: elements["ticket-provider"].value,
+      region: elements["ticket-region"].value,
+      proxy_id: elements["ticket-proxy"].value
+    } });
+    if (!state.authenticated || generation !== state.generation) return;
+    const created = result.tickets || [];
+    elements["ticket-new-links"].value = created.map(ticketLink).join("\n");
+    elements["ticket-new-links"].rows = Math.min(Math.max(created.length, 2), 10);
+    elements["ticket-new"].hidden = created.length === 0;
+    await loadTickets();
+    if (state.authenticated && generation === state.generation) showMessage("ticketsCreated", "success", { count: created.length });
+  } catch (error) {
+    if (state.authenticated && generation === state.generation) reportError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+elements["copy-new-links"].addEventListener("click", () => copyText(elements["ticket-new-links"].value, "ticketCopied"));
+
+elements["purge-tickets"].addEventListener("click", async () => {
+  const generation = state.generation;
+  if (!window.confirm(translate("confirmPurgeTickets"))) return;
+  const button = elements["purge-tickets"];
+  button.disabled = true;
+  try {
+    const result = await requestJSON("/api/tickets/purge", { method: "POST", body: {} });
+    if (!state.authenticated || generation !== state.generation) return;
+    await loadTickets();
+    if (state.authenticated && generation === state.generation) showMessage("ticketsPurged", "success", { count: result.deleted });
+  } catch (error) {
+    if (state.authenticated && generation === state.generation) reportError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 function proxySelect(selected) {
   const select = document.createElement("select");
@@ -683,6 +833,10 @@ function renderProxies() {
   const loginProxy = proxySelect(selected);
   elements["oauth-proxy"].replaceChildren(...loginProxy.children);
   elements["oauth-proxy"].value = selected;
+  const ticketSelected = elements["ticket-proxy"].value;
+  const ticketProxy = proxySelect(ticketSelected);
+  elements["ticket-proxy"].replaceChildren(...ticketProxy.children);
+  elements["ticket-proxy"].value = ticketSelected;
   elements["proxy-list"].replaceChildren(...state.proxies.map(proxy => {
     const item = textElement("div", "", "credit-item proxy-item");
     const details = textElement("div");
@@ -967,7 +1121,7 @@ elements["refresh-page"].addEventListener("click", async () => {
   if (state.page === "config" && state.config && elements["config-json"].value !== JSON.stringify(state.config.settings || {}, null, 2) && !window.confirm(translate("confirmDiscard"))) return;
   button.disabled = true;
   try {
-    if (state.page === "accounts") await Promise.all([loadAccounts(), loadStatus()]);
+    if (state.page === "accounts" || state.page === "tickets") await Promise.all([loadAccounts(), loadStatus()]);
     else if (state.page === "config") await loadConfig();
     else await loadStatus();
     showMessage("pageUpdated", "success");

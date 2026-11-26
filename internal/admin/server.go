@@ -18,7 +18,7 @@ import (
 	"quickwork-openai/internal/store"
 )
 
-//go:embed static/index.html static/app.css static/app.js
+//go:embed static/index.html static/app.css static/app.js static/authorize.html static/authorize.css static/authorize.js
 var assets embed.FS
 
 type loginEntry struct {
@@ -39,6 +39,7 @@ type Server struct {
 	sessions       map[[32]byte]adminSession
 	attempts       map[string]loginAttempts
 	logins         map[string]loginEntry
+	ticketLogins   map[string]*ticketLogin
 	configMu       sync.Mutex
 	saved          config.Config
 	restartNeeded  bool
@@ -56,6 +57,7 @@ func NewServer(cfg *config.Config, st *store.Store, mgr *accounts.Manager, addrO
 		sessions:       make(map[[32]byte]adminSession),
 		attempts:       make(map[string]loginAttempts),
 		logins:         make(map[string]loginEntry),
+		ticketLogins:   make(map[string]*ticketLogin),
 		saved:          cfg.FileValues(),
 	}
 	if err := server.configureAuth(); err != nil {
@@ -78,6 +80,10 @@ func NewServer(cfg *config.Config, st *store.Store, mgr *accounts.Manager, addrO
 	server.routes.HandleFunc("GET /api/logins/{id}", server.handleLoginStatus)
 	server.routes.HandleFunc("POST /api/logins/{id}/callback", server.handleLoginCallback)
 	server.routes.HandleFunc("DELETE /api/logins/{id}", server.handleLoginCancel)
+	server.routes.HandleFunc("GET /api/tickets", server.handleTickets)
+	server.routes.HandleFunc("POST /api/tickets", server.handleTicketCreate)
+	server.routes.HandleFunc("POST /api/tickets/purge", server.handleTicketPurge)
+	server.routes.HandleFunc("DELETE /api/tickets/{id}", server.handleTicketDelete)
 	server.routes.HandleFunc("GET /api/config", server.handleConfigGet)
 	server.routes.HandleFunc("PUT /api/config", server.handleConfigSave)
 	server.routes.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +103,10 @@ func (s *Server) Close() {
 		entry.flow.Cancel()
 	}
 	clear(s.logins)
+	for _, entry := range s.ticketLogins {
+		entry.flow.Cancel()
+	}
+	clear(s.ticketLogins)
 	clear(s.sessions)
 }
 
@@ -115,6 +125,10 @@ func (s *Server) Handler(proxy http.Handler) http.Handler {
 			s.serveAPI(w, r)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/authorize/") {
+			s.serveAuthorize(w, r)
+			return
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -131,6 +145,12 @@ func (s *Server) Handler(proxy http.Handler) http.Handler {
 		case "/assets/app.js":
 			file = "static/app.js"
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		case "/assets/authorize.css":
+			file = "static/authorize.css"
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		case "/assets/authorize.js":
+			file = "static/authorize.js"
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			http.NotFound(w, r)
 			return
@@ -144,6 +164,18 @@ func (s *Server) Handler(proxy http.Handler) http.Handler {
 			_, _ = w.Write(body)
 		}
 	})
+}
+
+func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, file, contentType string) {
+	body, err := assets.ReadFile(file)
+	if err != nil {
+		http.Error(w, "asset unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	if r.Method == http.MethodGet {
+		_, _ = w.Write(body)
+	}
 }
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {

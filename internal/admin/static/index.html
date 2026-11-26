@@ -36,6 +36,7 @@
         <nav class="navigation" data-i18n-aria-label="managementPages" aria-label="Management pages">
           <button class="nav-item active" type="button" data-page="overview" aria-current="page"><span aria-hidden="true">◫</span><span class="nav-text" data-i18n="overview">Overview</span></button>
           <button class="nav-item" type="button" data-page="accounts"><span aria-hidden="true">◎</span><span class="nav-text" data-i18n="accounts">Accounts</span></button>
+          <button class="nav-item" type="button" data-page="tickets"><span aria-hidden="true">⚿</span><span class="nav-text" data-i18n="authLinks">Authorization links</span></button>
           <button class="nav-item" type="button" data-page="config"><span aria-hidden="true">⚙</span><span class="nav-text" data-i18n="settings">Settings</span></button>
           <button class="nav-item" type="button" data-page="playground"><span aria-hidden="true">▷</span><span class="nav-text" data-i18n="playground">Playground</span></button>
         </nav>
@@ -138,6 +139,31 @@
                 </form>
                 <div class="flow-footer"><button id="check-login" class="button subtle" type="button" data-i18n="updateSignIn">Update sign-in status</button><button id="cancel-login" class="button danger subtle" type="button" data-i18n="cancelSignIn">Cancel this sign-in</button></div>
               </div>
+            </article>
+          </section>
+
+          <section id="page-tickets" class="page" data-i18n-aria-label="authLinks" aria-label="Authorization links" hidden>
+            <div class="page-intro"><div><h2 data-i18n="authLinks">Authorization links</h2><p class="muted" data-i18n="authLinksIntro">Send a link to whoever holds the account. They sign in on their own computer and the account joins the pool, without the console password.</p></div><div class="toolbar"><button id="purge-tickets" class="button subtle" type="button" data-i18n="purgeTickets">Remove used and expired</button></div></div>
+            <article class="panel">
+              <div class="panel-heading"><div><h3 data-i18n="generateLinks">Generate links</h3><p class="muted" data-i18n="generateLinksHint">One link authorizes one account. The page walks the recipient through both callback pastes.</p></div></div>
+              <form id="ticket-form" class="form-grid ticket-grid">
+                <div><label for="ticket-count" data-i18n="ticketCount">Number of links</label><input id="ticket-count" type="number" min="1" max="50" value="1" required></div>
+                <div><label for="ticket-label" data-i18n="ticketLabel">Label (optional)</label><input id="ticket-label" maxlength="120" autocomplete="off"></div>
+                <div><label for="ticket-ttl" data-i18n="ticketTTL">Valid for (days)</label><input id="ticket-ttl" type="number" min="1" max="30" value="7" required></div>
+                <div><label for="ticket-provider" data-i18n="provider">Provider</label><select id="ticket-provider"><option value="social">social</option><option value="enterprise">enterprise</option><option value="gateway">gateway</option><option value="social_gateway">social_gateway</option></select></div>
+                <div><label for="ticket-region" data-i18n="regionHint">Region (optional, e.g. us-east-1)</label><input id="ticket-region" autocomplete="off"></div>
+                <div><label for="ticket-proxy" data-i18n="outboundProxy">Outbound proxy</label><select id="ticket-proxy"></select></div>
+                <div class="form-grid-action"><button id="create-tickets" class="button primary" type="submit" data-i18n="generate">Generate</button></div>
+              </form>
+              <div id="ticket-new" class="ticket-new" hidden>
+                <label for="ticket-new-links" data-i18n="newLinks">New links</label>
+                <textarea id="ticket-new-links" rows="3" readonly spellcheck="false"></textarea>
+                <button id="copy-new-links" class="button" type="button" data-i18n="copyAll">Copy all</button>
+              </div>
+            </article>
+            <article class="panel table-panel">
+              <div class="table-scroll"><table><thead><tr><th data-i18n="ticketLabelColumn">Label</th><th data-i18n="status">Status</th><th data-i18n="account">Account</th><th data-i18n="ticketExpiresColumn">Link expires</th><th data-i18n="attemptsLeft">Attempts left</th><th data-i18n="actions">Actions</th></tr></thead><tbody id="tickets-body"></tbody></table></div>
+              <p id="tickets-empty" class="empty-state" data-i18n="noTickets" hidden>No authorization links yet.</p>
             </article>
           </section>
 
