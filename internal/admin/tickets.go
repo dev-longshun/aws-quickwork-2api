@@ -15,7 +15,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -226,6 +230,11 @@ func (s *Server) handleTicketCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "database_error", "Could not create authorization links")
 		return
 	}
+	for _, t := range tickets {
+		ev := s.newTicketEvent(r, t.ID, "create")
+		ev.ok(fmt.Sprintf("link created (%s, valid %dh, %d attempts)", t.Provider, input.TTLHours, input.MaxActivations))
+		ev.save()
+	}
 	views := make([]ticketView, 0, len(tickets))
 	for _, t := range tickets {
 		views = append(views, s.ticketView(t, now))
@@ -255,6 +264,9 @@ func (s *Server) handleTicketDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "ticket_not_found", "Authorization link not found")
 		return
 	}
+	ev := s.newTicketEvent(r, id, "delete")
+	ev.ok("link deleted")
+	ev.save()
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
@@ -367,6 +379,13 @@ func (s *Server) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, "GET")
 			return
 		}
+		if r.Method == http.MethodGet {
+			if t, err := s.store.TicketByToken(r.Context(), token); err == nil && t != nil {
+				ev := s.newTicketEvent(r, t.ID, "open")
+				ev.ok("link page opened, status " + t.EffectiveStatus(time.Now()))
+				ev.save()
+			}
+		}
 		s.serveAsset(w, r, "static/authorize.html", "text/html; charset=utf-8")
 		return
 	case "status":
@@ -408,6 +427,9 @@ func (s *Server) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTicketStart(w http.ResponseWriter, r *http.Request, t *store.AuthTicket, entry *ticketLogin) {
+	ev := s.newTicketEvent(r, t.ID, "start")
+	defer ev.save()
+	writeError := ev.writeError
 	var input struct{}
 	if !decodeJSON(w, r, &input, 1<<10) {
 		return
@@ -421,6 +443,7 @@ func (s *Server) handleTicketStart(w http.ResponseWriter, r *http.Request, t *st
 		return
 	}
 	if entry != nil {
+		ev.ok("reused sign-in already in progress, stage " + entry.flow.Status().Stage)
 		writeJSON(w, http.StatusOK, publicStatus(t, entry))
 		return
 	}
@@ -451,6 +474,7 @@ func (s *Server) handleTicketStart(w http.ResponseWriter, r *http.Request, t *st
 		// Another request started a sign-in concurrently; reuse it.
 		s.mu.Unlock()
 		flow.Cancel()
+		ev.ok("reused concurrent sign-in")
 		writeJSON(w, http.StatusOK, publicStatus(t, existing))
 		return
 	}
@@ -485,26 +509,34 @@ func (s *Server) handleTicketStart(w http.ResponseWriter, r *http.Request, t *st
 
 	t.Status = store.TicketAuthorizing
 	t.ActivationCount++
+	ev.ok(fmt.Sprintf("sign-in started (attempt %d/%d), waiting for step 1 address", t.ActivationCount, t.MaxActivations))
 	writeJSON(w, http.StatusCreated, publicStatus(t, entry))
 }
 
 func (s *Server) handleTicketCallback(w http.ResponseWriter, r *http.Request, t *store.AuthTicket, entry *ticketLogin) {
+	ev := s.newTicketEvent(r, t.ID, "callback")
+	defer ev.save()
+	writeError := ev.writeError
 	var input struct {
 		URL string `json:"url"`
 	}
 	if !decodeJSON(w, r, &input, 128<<10) {
+		ev.fail("invalid request body")
 		return
 	}
+	ev.Input = callbackKind(input.URL)
 	if entry == nil || t.Status != store.TicketAuthorizing {
 		writeError(w, http.StatusConflict, "login_not_found", "No sign-in is in progress; click Start sign-in first")
 		return
 	}
+	before := entry.flow.Status().Stage
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout.Duration())
 	defer cancel()
 	status, err := entry.flow.Submit(ctx, input.URL)
 	input.URL = ""
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "callback_failed", err.Error())
+		ev.fail("rejected at stage " + before + ": " + err.Error())
 		return
 	}
 	if status.Stage == "complete" {
@@ -523,8 +555,118 @@ func (s *Server) handleTicketCallback(w http.ResponseWriter, r *http.Request, t 
 		delete(s.ticketLogins, t.ID)
 		s.mu.Unlock()
 		t.Status, t.AccountID, t.AccountEmail = store.TicketCompleted, status.AccountID, email
+		ev.ok(fmt.Sprintf("authorized: account #%d %s", status.AccountID, email))
 		writeJSON(w, http.StatusOK, publicStatus(t, nil))
 		return
 	}
+	switch {
+	case before == "authorize" && status.Stage == "authorize":
+		ev.ok("step 1 address submitted AGAIN; still waiting for the final 127.0.0.1:18080/?code= address")
+	case status.Stage == "authorize":
+		ev.ok("step 1 accepted; waiting for the final 127.0.0.1:18080/?code= address")
+	default:
+		ev.ok("stage " + before + " -> " + status.Stage)
+	}
 	writeJSON(w, http.StatusOK, publicStatus(t, entry))
+}
+
+// ---- Audit log ---------------------------------------------------------
+
+type ticketEvent struct {
+	store.TicketEvent
+	s     *Server
+	saved bool
+}
+
+func clientIP(r *http.Request) string {
+	// The container only listens on loopback behind nginx, which sets X-Real-IP.
+	if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
+		return ip
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func (s *Server) newTicketEvent(r *http.Request, ticketID, action string) *ticketEvent {
+	actor := "public"
+	if _, ok := r.Context().Value(sessionContextKey{}).([32]byte); ok {
+		actor = "admin"
+	}
+	return &ticketEvent{s: s, TicketEvent: store.TicketEvent{
+		TicketID: ticketID, At: time.Now().Unix(), IP: clientIP(r), Actor: actor, Action: action, Result: "error",
+	}}
+}
+
+func (e *ticketEvent) ok(detail string)   { e.Result, e.Detail = "ok", detail }
+func (e *ticketEvent) fail(detail string) { e.Result, e.Detail = "error", detail }
+
+// writeError records the failure on the event before answering.
+func (e *ticketEvent) writeError(w http.ResponseWriter, status int, code, message string) {
+	e.fail(code + ": " + message)
+	writeError(w, status, code, message)
+}
+
+func (e *ticketEvent) save() {
+	if e.saved {
+		return
+	}
+	e.saved = true
+	if e.Detail == "" {
+		e.Detail = "no response recorded"
+	}
+	log.Printf("ticket=%s actor=%s ip=%s action=%s input=%s result=%s detail=%q",
+		e.TicketID, e.Actor, e.IP, e.Action, e.Input, e.Result, e.Detail)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := e.s.store.AddTicketEvent(ctx, e.TicketEvent); err != nil {
+		log.Printf("ticket=%s audit write failed: %v", e.TicketID, err)
+	}
+}
+
+// callbackKind describes a pasted URL without keeping its secrets.
+func callbackKind(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "empty"
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "unparsable"
+	}
+	q := u.Query()
+	if u.Fragment != "" {
+		if f, err := url.ParseQuery(u.Fragment); err == nil {
+			for k, v := range f {
+				if q.Get(k) == "" {
+					q[k] = v
+				}
+			}
+		}
+	}
+	switch {
+	case q.Get("code") != "":
+		return "code_url"
+	case q.Get("error") != "":
+		return "error_url"
+	case q.Get("nonce") != "":
+		return "step1_url"
+	case q.Get("client_id") != "":
+		return "authorize_page"
+	case q.Get("qwSurface") != "":
+		return "login_page"
+	default:
+		return "unknown"
+	}
+}
+
+func (s *Server) handleTicketEvents(w http.ResponseWriter, r *http.Request) {
+	events, err := s.store.TicketEvents(r.Context(), r.URL.Query().Get("ticket"), 500)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", "Could not load the log")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }

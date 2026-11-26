@@ -195,3 +195,76 @@ func (s *Store) PurgeClosedTickets(ctx context.Context, now time.Time) (int64, e
 	}
 	return res.RowsAffected()
 }
+
+// TicketEvent is one audit record for an authorization link. Callback URLs are
+// never stored, only what kind of URL was pasted.
+type TicketEvent struct {
+	ID       int64  `json:"id"`
+	TicketID string `json:"ticket_id"`
+	Label    string `json:"label"`
+	At       int64  `json:"at"`
+	IP       string `json:"ip"`
+	Actor    string `json:"actor"`
+	Action   string `json:"action"`
+	Input    string `json:"input,omitempty"`
+	Result   string `json:"result"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+func (s *Store) migrateTicketEvents() error {
+	_, err := s.db.Exec(`
+CREATE TABLE IF NOT EXISTS auth_ticket_events (
+	id        INTEGER PRIMARY KEY AUTOINCREMENT,
+	ticket_id TEXT NOT NULL,
+	at        INTEGER NOT NULL,
+	ip        TEXT NOT NULL DEFAULT '',
+	actor     TEXT NOT NULL DEFAULT '',
+	action    TEXT NOT NULL,
+	input     TEXT NOT NULL DEFAULT '',
+	result    TEXT NOT NULL,
+	detail    TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_auth_ticket_events_ticket ON auth_ticket_events(ticket_id, id);
+CREATE INDEX IF NOT EXISTS idx_auth_ticket_events_at ON auth_ticket_events(at);
+`)
+	return err
+}
+
+// AddTicketEvent appends one audit record; events are kept even after the
+// ticket itself is deleted.
+func (s *Store) AddTicketEvent(ctx context.Context, e TicketEvent) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_ticket_events (ticket_id, at, ip, actor, action, input, result, detail)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, e.TicketID, e.At, truncate(e.IP, 64), truncate(e.Actor, 32),
+		truncate(e.Action, 32), truncate(e.Input, 32), truncate(e.Result, 16), truncate(e.Detail, 500))
+	return err
+}
+
+// TicketEvents lists events newest first, optionally for one ticket.
+func (s *Store) TicketEvents(ctx context.Context, ticketID string, limit int) ([]TicketEvent, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	query := `SELECT e.id, e.ticket_id, COALESCE(t.label, ''), e.at, e.ip, e.actor, e.action, e.input, e.result, e.detail
+		FROM auth_ticket_events e LEFT JOIN auth_tickets t ON t.id = e.ticket_id`
+	args := []any{}
+	if ticketID != "" {
+		query += ` WHERE e.ticket_id = ?`
+		args = append(args, ticketID)
+	}
+	query += ` ORDER BY e.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]TicketEvent, 0)
+	for rows.Next() {
+		var e TicketEvent
+		if err := rows.Scan(&e.ID, &e.TicketID, &e.Label, &e.At, &e.IP, &e.Actor, &e.Action, &e.Input, &e.Result, &e.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

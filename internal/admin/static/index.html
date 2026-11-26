@@ -164,6 +164,11 @@
               <div class="table-scroll"><table><thead><tr><th data-i18n="ticketLabelColumn">Label</th><th data-i18n="status">Status</th><th data-i18n="account">Account</th><th data-i18n="ticketExpiresColumn">Link expires</th><th data-i18n="attemptsLeft">Attempts left</th><th data-i18n="actions">Actions</th></tr></thead><tbody id="tickets-body"></tbody></table></div>
               <p id="tickets-empty" class="empty-state" data-i18n="noTickets" hidden>No authorization links yet.</p>
             </article>
+            <article class="panel table-panel" id="ticket-log-panel">
+              <div class="panel-heading log-heading"><div><h3 data-i18n="ticketLog">Authorization log</h3><p class="muted" data-i18n="ticketLogHint">Every link open, sign-in start and pasted address is recorded with time, IP and result, kept in the database. Pasted addresses themselves are not stored.</p></div><div class="toolbar"><span id="ticket-log-filter" class="badge neutral" hidden></span><button id="ticket-log-all" class="button small subtle" type="button" data-i18n="showAll" hidden>Show all</button><button id="ticket-log-refresh" class="button small" type="button" data-i18n="refresh">Refresh</button></div></div>
+              <div class="table-scroll"><table class="log-table"><thead><tr><th data-i18n="logTime">Time</th><th data-i18n="logLink">Link</th><th data-i18n="logWho">Who / IP</th><th data-i18n="logAction">Action</th><th data-i18n="logPasted">Pasted</th><th data-i18n="logResult">Result</th></tr></thead><tbody id="ticket-log-body"></tbody></table></div>
+              <p id="ticket-log-empty" class="empty-state" data-i18n="noLog" hidden>No records yet.</p>
+            </article>
           </section>
 
           <section id="page-proxies" class="page" data-i18n-aria-label="outboundProxies" aria-label="Outbound proxies" hidden>

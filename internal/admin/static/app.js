@@ -292,6 +292,18 @@ const translations = {
   callbackNextStep: ["Step 1 accepted. Ask the recipient to open the authorization page from their link, then paste the final address.", "第 1 步已提交。让同事回到授权链接页面点「打开授权页面」完成授权，再把最后的地址发来。"],
   callbackFailed: ["Not accepted: {message}", "提交失败：{message}"],
   callbackCompleted: ["Authorized: {account}", "授权完成：{account}"],
+  ticketLog: ["Authorization log", "授权日志"],
+  ticketLogHint: ["Every link open, sign-in start and pasted address is recorded with time, IP and result, kept in the database. Pasted addresses themselves are not stored.", "每次打开链接、开始登录、提交地址都会记下时间、IP 和结果，保存在数据库里，重启和更新都不会丢。地址本身不保存，只记是哪一类地址。"],
+  showAll: ["Show all", "看全部"],
+  logTime: ["Time", "时间"],
+  logLink: ["Link", "链接"],
+  logWho: ["Who / IP", "来源 / IP"],
+  logAction: ["Action", "操作"],
+  logPasted: ["Pasted", "贴的内容"],
+  logResult: ["Result", "结果"],
+  noLog: ["No records yet.", "还没有记录。"],
+  viewLog: ["Log", "日志"],
+  logFilter: ["Only: {name}", "只看：{name}"],
   proxiesIntro: ["Accounts and authorization links can each use a proxy. Bind them on the Accounts page or when generating links.", "账号和授权链接都可以单独走代理：在账号管理里给账号绑定，或生成授权链接时选择。"],
   checkDirect: ["Check server IP", "检测服务器直连 IP"],
   checkAllProxies: ["Check all", "全部检测"],
@@ -422,6 +434,7 @@ function setLanguage(value) {
   if (state.authenticated) renderAccounts();
   if (state.authenticated) renderProxies();
   if (state.authenticated) renderTickets();
+  if (state.authenticated) renderTicketLog();
   updateProxyCount();
   if (state.config) renderConfigMetadata(state.config);
   if (state.login) renderLogin(state.login);
@@ -507,6 +520,9 @@ function clearSession() {
   elements["proxy-list"].replaceChildren();
   state.tickets = [];
   state.proxyChecks = {};
+  state.ticketLog = [];
+  state.logTicket = "";
+  elements["ticket-log-body"].replaceChildren();
   state.callbackTicket = "";
   elements["ticket-callback-url"].value = "";
   elements["ticket-callback-panel"].hidden = true;
@@ -734,6 +750,7 @@ async function loadAccounts() {
   renderProxies();
   renderAccounts();
   renderTickets();
+  await loadTicketLog();
 }
 
 async function loadTickets() {
@@ -742,7 +759,75 @@ async function loadTickets() {
   if (!state.authenticated || generation !== state.generation) return;
   state.tickets = data.tickets || [];
   renderTickets();
+  await loadTicketLog();
 }
+
+async function loadTicketLog() {
+  const generation = state.generation;
+  const query = state.logTicket ? `?ticket=${encodeURIComponent(state.logTicket)}` : "";
+  const data = await requestJSON(`/api/tickets/events${query}`);
+  if (!state.authenticated || generation !== state.generation) return;
+  state.ticketLog = data.events || [];
+  renderTicketLog();
+}
+
+const logZH = {
+  actions: { open: "打开链接页面", start: "开始登录", callback: "提交地址", create: "生成链接", delete: "删除链接" },
+  inputs: { code_url: "最后一步地址 (?code=)", step1_url: "第 1 步地址 (?nonce=)", authorize_page: "授权页面地址（贴错）", login_page: "登录页面地址（贴错）", error_url: "带 error 的地址", unknown: "认不出的内容", unparsable: "不是地址", empty: "空" },
+  details: [
+    [/^step 1 address submitted AGAIN.*/, "又贴了一次第 1 步的地址，仍在等最后那个 127.0.0.1:18080/?code= 地址"],
+    [/^step 1 accepted.*/, "第 1 步通过，等最后那个 127.0.0.1:18080/?code= 地址"],
+    [/^sign-in started \(attempt (\d+)\/(\d+)\).*/, "开始登录（第 $1/$2 次），等第 1 步地址"],
+    [/^reused (concurrent )?sign-in.*/, "沿用进行中的登录"],
+    [/^authorized: account #(\d+) ?(.*)$/, "✓ 授权完成，账号 #$1 $2"],
+    [/^link page opened, status pending.*/, "打开了链接页面（待打开）"],
+    [/^link page opened, status authorizing.*/, "打开了链接页面（登录中）"],
+    [/^link page opened, status completed.*/, "打开了链接页面（已授权）"],
+    [/^link page opened, status (\w+).*/, "打开了链接页面（$1）"],
+    [/^link created.*/, "生成链接"],
+    [/^link deleted.*/, "删除链接"],
+    [/^rejected at stage (\w+): (.*)$/, "被拒绝（当时在 $1 阶段）：$2"],
+    [/^login_not_found.*/, "没有进行中的登录（超时或服务重启过）"]
+  ]
+};
+
+function logText(kind, value) {
+  if (language !== "zh-CN" || !value) return value || "";
+  if (kind === "detail") {
+    const rejected = value.match(/^rejected at stage (\w+): (.*)$/);
+    if (rejected) return `被拒绝（当时在${rejected[1] === "authorize" ? "第 2 步" : "第 1 步"}）：${callbackErrorText({ message: rejected[2] })}`;
+    for (const [pattern, text] of logZH.details) if (pattern.test(value)) return value.replace(pattern, text);
+    return value;
+  }
+  return logZH[kind][value] || value;
+}
+
+function renderTicketLog() {
+  const events = state.ticketLog || [];
+  const filtered = Boolean(state.logTicket);
+  elements["ticket-log-filter"].hidden = !filtered;
+  elements["ticket-log-all"].hidden = !filtered;
+  if (filtered) setRawText(elements["ticket-log-filter"], translate("logFilter", { name: state.logTicketName }));
+  elements["ticket-log-body"].replaceChildren(...events.map(event => {
+    const row = document.createElement("tr");
+    const link = document.createElement("td");
+    link.append(textElement("div", event.label || "—"), textElement("code", event.ticket_id));
+    const who = document.createElement("td");
+    who.append(textElement("div", event.actor === "admin" ? (language === "zh-CN" ? "管理员" : "admin") : (language === "zh-CN" ? "链接访问者" : "link visitor")), textElement("span", event.ip || "—", "log-detail"));
+    const result = document.createElement("td");
+    result.append(textElement("span", event.result === "ok" ? "✓" : "✗", event.result === "ok" ? "check-ok" : "check-fail"), textElement("span", logText("detail", event.detail), "log-detail"));
+    row.append(textElement("td", formatTime(event.at)), link, who, textElement("td", logText("actions", event.action)), textElement("td", logText("inputs", event.input) || "—"), result);
+    return row;
+  }));
+  elements["ticket-log-empty"].hidden = events.length > 0;
+}
+
+elements["ticket-log-refresh"].addEventListener("click", () => loadTicketLog().catch(reportError));
+elements["ticket-log-all"].addEventListener("click", () => {
+  state.logTicket = "";
+  state.logTicketName = "";
+  loadTicketLog().catch(reportError);
+});
 
 function ticketLink(ticket) {
   return `${window.location.origin}${ticket.path}`;
@@ -776,6 +861,15 @@ function renderTickets() {
     const attempts = textElement("td", ticket.status === "completed" ? "—" : `${ticket.activations_left} / ${ticket.max_activations}`);
     const actions = document.createElement("td");
     const wrap = textElement("div", "", "table-actions");
+    const logButton = textElement("button", translate("viewLog"), "button small subtle");
+    logButton.type = "button";
+    logButton.addEventListener("click", () => {
+      state.logTicket = ticket.id;
+      state.logTicketName = ticket.label || ticket.id;
+      loadTicketLog().catch(reportError);
+      elements["ticket-log-panel"].scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    wrap.append(logButton);
     if (ticket.status === "authorizing") {
       const fill = textElement("button", translate("fillCallback"), "button small subtle");
       fill.type = "button";

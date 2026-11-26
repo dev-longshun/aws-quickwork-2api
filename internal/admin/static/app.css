@@ -279,3 +279,6 @@ tbody tr:last-child td { border-bottom: none; }
 .callback-panel { border-color: var(--warning-text); }
 .callback-panel .import-bar .button.subtle { margin-left: auto; }
 .callback-panel .import-bar .button.primary { margin-left: 0; }
+.log-heading { padding: 18px 20px 0; }
+.log-table td { vertical-align: top; font-size: 13px; }
+.log-table .log-detail { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; max-width: 520px; }
