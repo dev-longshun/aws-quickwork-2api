@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -45,39 +46,146 @@ func New(source Source, defaultID string) *Router {
 	return &Router{source: source, defaultID: defaultID, transports: make(map[string]*http.Transport)}
 }
 
+// ParseList parses proxies pasted by an administrator. Besides one
+// scheme://[user:pass@]host:port URL per line it accepts the formats the
+// kiro-rs proxy pool uses: user:pass@host:port, host:port:user:pass and
+// host:port (each optionally prefixed by a scheme), plus the kiro-rs JSON
+// export [{"name","url","username","password"}]. Lines without a scheme use
+// defaultScheme ("http" when empty).
 func ParseList(text string) ([]Proxy, error) {
+	return ParseListWithDefault(text, "http")
+}
+
+func ParseListWithDefault(text, defaultScheme string) ([]Proxy, error) {
+	defaultScheme = strings.ToLower(strings.TrimSpace(defaultScheme))
+	if defaultScheme == "" {
+		defaultScheme = "http"
+	}
+	if defaultScheme != "http" && defaultScheme != "socks5" {
+		return nil, errors.New("default scheme must be http or socks5")
+	}
 	proxies := make([]Proxy, 0)
 	seen := make(map[string]bool)
-	scanner := bufio.NewScanner(strings.NewReader(text))
-	scanner.Buffer(make([]byte, 4096), 16<<10)
-	line := 0
-	for scanner.Scan() {
-		line++
-		value := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "\ufeff"))
-		if value == "" || strings.HasPrefix(value, "#") {
-			continue
-		}
-		parsed, err := parseProxy(value)
-		if err != nil {
-			return nil, fmt.Errorf("invalid proxy on line %d: %w", line, err)
-		}
+	add := func(parsed *url.URL, name string) error {
 		digest := sha256.Sum256([]byte(parsed.String()))
 		id := hex.EncodeToString(digest[:])
-		if !seen[id] {
-			seen[id] = true
-			proxies = append(proxies, Proxy{ID: id, Label: parsed.Scheme + "://" + parsed.Host, URL: parsed.String()})
+		if seen[id] {
+			return nil
 		}
+		seen[id] = true
+		label := strings.TrimSpace(name)
+		if label == "" {
+			label = parsed.Scheme + "://" + parsed.Host
+		}
+		if len(label) > 120 {
+			label = label[:120]
+		}
+		proxies = append(proxies, Proxy{ID: id, Label: label, URL: parsed.String()})
 		if len(proxies) > 1000 {
-			return nil, errors.New("at most 1000 proxies can be imported at once")
+			return errors.New("at most 1000 proxies can be imported at once")
 		}
+		return nil
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, errors.New("a proxy line exceeds 16 KB")
+
+	trimmed := strings.TrimSpace(strings.TrimPrefix(text, "\ufeff"))
+	if strings.HasPrefix(trimmed, "[") {
+		var entries []struct {
+			Name     string `json:"name"`
+			URL      string `json:"url"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.Unmarshal([]byte(trimmed), &entries); err != nil {
+			return nil, errors.New("invalid JSON; expected [{\"name\",\"url\",\"username\",\"password\"}]")
+		}
+		for i, entry := range entries {
+			raw, err := normalizeProxyLine(entry.URL, defaultScheme)
+			if err != nil {
+				return nil, fmt.Errorf("invalid proxy in JSON item %d: %w", i+1, err)
+			}
+			parsed, err := parseProxy(raw)
+			if err != nil {
+				return nil, fmt.Errorf("invalid proxy in JSON item %d: %w", i+1, err)
+			}
+			if entry.Username != "" || entry.Password != "" {
+				parsed.User = url.UserPassword(entry.Username, entry.Password)
+				if parsed, err = parseProxy(parsed.String()); err != nil {
+					return nil, fmt.Errorf("invalid proxy in JSON item %d: %w", i+1, err)
+				}
+			}
+			if err := add(parsed, entry.Name); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		scanner := bufio.NewScanner(strings.NewReader(trimmed))
+		scanner.Buffer(make([]byte, 4096), 16<<10)
+		line := 0
+		for scanner.Scan() {
+			line++
+			value := strings.TrimSpace(scanner.Text())
+			if value == "" || strings.HasPrefix(value, "#") {
+				continue
+			}
+			raw, err := normalizeProxyLine(value, defaultScheme)
+			if err != nil {
+				return nil, fmt.Errorf("invalid proxy on line %d: %w", line, err)
+			}
+			parsed, err := parseProxy(raw)
+			if err != nil {
+				return nil, fmt.Errorf("invalid proxy on line %d: %w", line, err)
+			}
+			if err := add(parsed, ""); err != nil {
+				return nil, err
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, errors.New("a proxy line exceeds 16 KB")
+		}
 	}
 	if len(proxies) == 0 {
-		return nil, errors.New("enter at least one proxy URL")
+		return nil, errors.New("enter at least one proxy")
 	}
 	return proxies, nil
+}
+
+// normalizeProxyLine turns the supported shorthand formats into a URL.
+func normalizeProxyLine(value, defaultScheme string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", errors.New("empty proxy")
+	}
+	scheme := defaultScheme
+	rest := value
+	if i := strings.Index(value, "://"); i >= 0 {
+		scheme = strings.ToLower(value[:i])
+		rest = value[i+3:]
+	}
+	switch scheme {
+	case "http", "socks5":
+	case "socks5h":
+		scheme = "socks5"
+	case "https":
+		return "", errors.New("https:// proxies are not supported; use http:// or socks5://")
+	default:
+		return "", fmt.Errorf("unsupported proxy scheme %q; use http or socks5", scheme)
+	}
+	rest = strings.TrimRight(rest, "/")
+	if !strings.Contains(rest, "@") {
+		// host:port:user:pass (port numeric) → user:pass@host:port
+		parts := strings.Split(rest, ":")
+		if len(parts) >= 4 && isPort(parts[1]) && !strings.Contains(rest, "[") {
+			user := parts[2]
+			pass := strings.Join(parts[3:], ":")
+			rest = url.UserPassword(user, pass).String() + "@" + parts[0] + ":" + parts[1]
+		}
+	}
+	return scheme + "://" + rest, nil
+}
+
+func isPort(value string) bool {
+	n, err := strconv.Atoi(value)
+	return err == nil && n >= 1 && n <= 65535
 }
 
 func parseProxy(value string) (*url.URL, error) {

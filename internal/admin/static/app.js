@@ -282,7 +282,30 @@ const translations = {
   confirmPurgeTickets: ["Remove all used and expired links?", "清理所有已用和过期的链接？"],
   ticketsCreated: ["Generated {count} link(s).", "已生成 {count} 个链接。"],
   ticketsPurged: ["Removed {count} link(s).", "已清理 {count} 个链接。"],
-  ticketCopied: ["Link copied.", "链接已复制。"]
+  ticketCopied: ["Link copied.", "链接已复制。"],
+  proxiesIntro: ["Accounts and authorization links can each use a proxy. Bind them on the Accounts page or when generating links.", "账号和授权链接都可以单独走代理：在账号管理里给账号绑定，或生成授权链接时选择。"],
+  checkDirect: ["Check server IP", "检测服务器直连 IP"],
+  checkAllProxies: ["Check all", "全部检测"],
+  batchImportProxies: ["Batch import", "批量导入"],
+  proxyFormatsHint: ["Same formats as kiro-rs. One per line, or paste a kiro-rs JSON export. Duplicates are skipped; credentials are never sent back to the browser.", "格式和 kiro-rs 一样：每行一个，也可以直接粘贴 kiro-rs 导出的 JSON。重复的会跳过，账号密码不会再回传到浏览器。"],
+  proxyPastePlaceholder: ["Paste proxies here", "把代理粘贴到这里"],
+  defaultScheme: ["Lines without a scheme use", "没写协议的行按"],
+  proxyLineCount: ["{count} line(s)", "共 {count} 行"],
+  proxyJSONCount: ["JSON, {count} item(s)", "JSON，共 {count} 条"],
+  proxyName: ["Name", "名称"],
+  proxyAddress: ["Address", "地址"],
+  boundAccounts: ["Bound accounts", "绑定账号"],
+  exitCheck: ["Exit IP / latency", "出口 IP / 延迟"],
+  noProxies: ["No proxies yet. Accounts use the server's own network.", "还没有代理，账号直接用服务器自己的网络。"],
+  notChecked: ["Not checked", "未检测"],
+  checking: ["Checking…", "检测中…"],
+  check: ["Check", "检测"],
+  rename: ["Rename", "改名"],
+  renamePrompt: ["New name", "新名称"],
+  withAuth: ["with credentials", "带账号密码"],
+  directResult: ["Server direct IP: {result}", "服务器直连出口：{result}"],
+  proxyImportFailed: ["Nothing imported: {message}", "没有导入：{message}"],
+  proxiesChecked: ["Checked {count} proxies: {ok} OK, {failed} failed.", "已检测 {count} 个代理：{ok} 个正常，{failed} 个失败。"]
 };
 const apiErrorTranslations = {
   invalid_credentials: "invalidCredentials",
@@ -381,6 +404,7 @@ function setLanguage(value) {
   document.title = translate("title");
   for (const element of document.querySelectorAll("[data-i18n]")) element.textContent = translate(element.dataset.i18n, translationParameters.get(element));
   for (const element of document.querySelectorAll("[data-i18n-aria-label]")) element.setAttribute("aria-label", translate(element.dataset.i18nAriaLabel));
+  for (const element of document.querySelectorAll("[data-i18n-placeholder]")) element.setAttribute("placeholder", translate(element.dataset.i18nPlaceholder));
   for (const select of document.querySelectorAll("[data-language-select]")) select.value = language;
   for (const field of document.querySelectorAll("input, textarea, select")) field.setCustomValidity("");
   setTheme(document.body.dataset.theme === "dark");
@@ -388,6 +412,8 @@ function setLanguage(value) {
   if (state.status) renderStatus(state.status);
   if (state.authenticated) renderAccounts();
   if (state.authenticated) renderProxies();
+  if (state.authenticated) renderTickets();
+  updateProxyCount();
   if (state.config) renderConfigMetadata(state.config);
   if (state.login) renderLogin(state.login);
 }
@@ -399,6 +425,7 @@ const state = {
   csrf: "",
   generation: 0,
   requests: new Set(),
+  proxyChecks: {},
   page: "overview",
   status: null,
   config: null,
@@ -408,7 +435,7 @@ const state = {
   loginRevision: 0,
   playgroundController: null
 };
-const pageTitles = { overview: "overview", accounts: "accounts", tickets: "authLinks", config: "settings", playground: "playground" };
+const pageTitles = { overview: "overview", accounts: "accounts", tickets: "authLinks", proxies: "outboundProxies", config: "settings", playground: "playground" };
 const initialDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
 
 function setTheme(dark) {
@@ -470,6 +497,8 @@ function clearSession() {
   elements["oauth-proxy"].replaceChildren();
   elements["proxy-list"].replaceChildren();
   state.tickets = [];
+  state.proxyChecks = {};
+  elements["proxy-import-count"].textContent = "";
   elements["tickets-body"].replaceChildren();
   elements["ticket-proxy"].replaceChildren();
   elements["ticket-new-links"].value = "";
@@ -837,31 +866,145 @@ function renderProxies() {
   const ticketProxy = proxySelect(ticketSelected);
   elements["ticket-proxy"].replaceChildren(...ticketProxy.children);
   elements["ticket-proxy"].value = ticketSelected;
-  elements["proxy-list"].replaceChildren(...state.proxies.map(proxy => {
-    const item = textElement("div", "", "credit-item proxy-item");
-    const details = textElement("div");
-    details.append(textElement("div", proxy.label), textElement("code", proxy.id));
-    item.append(details);
-    const button = textElement("button", translate("delete"), "button small subtle danger");
-    button.type = "button";
-    button.addEventListener("click", async () => {
+  renderProxyTable();
+}
+
+function friendlyProxyError(message) {
+  const rules = [
+    [/EOF|connection reset/i, ["connection dropped", "连接被断开"]],
+    [/timeout|deadline exceeded/i, ["timed out", "超时"]],
+    [/refused/i, ["connection refused", "拒绝连接"]],
+    [/407|authentication|auth failed|username\/password/i, ["proxy auth failed", "代理认证失败"]],
+    [/no such host/i, ["host not found", "域名解析失败"]]
+  ];
+  for (const [pattern, text] of rules) if (pattern.test(message)) return `${text[language === "zh-CN" ? 1 : 0]} (${message})`;
+  return message;
+}
+
+function proxyCheckText(result) {
+  if (!result) return { text: translate("notChecked"), cls: "muted" };
+  if (result.pending) return { text: translate("checking"), cls: "muted" };
+  if (!result.ok) return { text: `✗ ${friendlyProxyError(result.error || "error")}`, cls: "check-fail" };
+  const place = [result.country_code || result.country, result.city].filter(Boolean).join(" · ");
+  return { text: `✓ ${result.ip}${place ? ` · ${place}` : ""} · ${result.latency_ms} ms`, cls: "check-ok" };
+}
+
+async function checkProxy(id) {
+  state.proxyChecks[id] = { pending: true };
+  renderProxyTable();
+  try {
+    state.proxyChecks[id] = await requestJSON(`/api/proxies/${encodeURIComponent(id)}/check`, { method: "POST", body: {} });
+  } catch (error) {
+    state.proxyChecks[id] = { ok: false, error: error.message };
+  }
+  renderProxyTable();
+  return state.proxyChecks[id];
+}
+
+function renderProxyTable() {
+  const proxies = state.proxies || [];
+  elements["proxy-list"].replaceChildren(...proxies.map(proxy => {
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
+    name.append(textElement("div", proxy.label, "account-label"), textElement("code", proxy.id.slice(0, 8)));
+    const address = document.createElement("td");
+    address.append(textElement("div", proxy.address || "—"));
+    if (proxy.auth) address.append(textElement("span", translate("withAuth"), "cell-sub"));
+    const bound = textElement("td", String(proxy.bound_accounts ?? 0));
+    const check = proxyCheckText(state.proxyChecks[proxy.id]);
+    const result = textElement("td", check.text, check.cls);
+    const actions = document.createElement("td");
+    const group = textElement("div", "", "table-actions");
+    const checkButton = textElement("button", translate("check"), "button small subtle");
+    checkButton.type = "button";
+    checkButton.disabled = Boolean(state.proxyChecks[proxy.id]?.pending);
+    checkButton.addEventListener("click", () => checkProxy(proxy.id));
+    const renameButton = textElement("button", translate("rename"), "button small subtle");
+    renameButton.type = "button";
+    renameButton.addEventListener("click", async () => {
+      const generation = state.generation;
+      const label = window.prompt(translate("renamePrompt"), proxy.label);
+      if (label === null || !label.trim() || label.trim() === proxy.label) return;
+      try {
+        await requestJSON(`/api/proxies/${encodeURIComponent(proxy.id)}`, { method: "PATCH", body: { label: label.trim() } });
+        if (state.authenticated && generation === state.generation) await loadAccounts();
+      } catch (error) {
+        if (state.authenticated && generation === state.generation) reportError(error);
+      }
+    });
+    const deleteButton = textElement("button", translate("delete"), "button small subtle danger");
+    deleteButton.type = "button";
+    deleteButton.addEventListener("click", async () => {
       const generation = state.generation;
       if (!window.confirm(translate("confirmDeleteProxy", { name: proxy.label }))) return;
-      button.disabled = true;
+      deleteButton.disabled = true;
       try {
         await requestJSON(`/api/proxies/${encodeURIComponent(proxy.id)}`, { method: "DELETE" });
+        delete state.proxyChecks[proxy.id];
         if (!state.authenticated || generation !== state.generation) return;
         await loadAccounts();
       } catch (error) {
         if (state.authenticated && generation === state.generation) reportError(error);
       } finally {
-        button.disabled = false;
+        deleteButton.disabled = false;
       }
     });
-    item.append(button);
-    return item;
+    group.append(checkButton, renameButton, deleteButton);
+    actions.append(group);
+    row.append(name, address, bound, result, actions);
+    return row;
   }));
+  elements["proxies-empty"].hidden = proxies.length > 0;
 }
+
+function updateProxyCount() {
+  const text = elements["proxy-import-text"].value.trim();
+  if (!text) {
+    setRawText(elements["proxy-import-count"], "");
+    return;
+  }
+  if (text.startsWith("[")) {
+    let count = 0;
+    try { count = JSON.parse(text).length || 0; } catch { count = 0; }
+    setRawText(elements["proxy-import-count"], translate("proxyJSONCount", { count }));
+    return;
+  }
+  const count = text.split("\n").filter(line => line.trim() && !line.trim().startsWith("#")).length;
+  setRawText(elements["proxy-import-count"], translate("proxyLineCount", { count }));
+}
+
+elements["proxy-import-text"].addEventListener("input", updateProxyCount);
+
+elements["check-all-proxies"].addEventListener("click", async () => {
+  const button = elements["check-all-proxies"];
+  const ids = (state.proxies || []).map(proxy => proxy.id);
+  if (!ids.length) return;
+  button.disabled = true;
+  try {
+    const queue = [...ids];
+    const results = [];
+    await Promise.all(Array.from({ length: Math.min(5, queue.length) }, async () => {
+      while (queue.length) results.push(await checkProxy(queue.shift()));
+    }));
+    const ok = results.filter(result => result?.ok).length;
+    showMessage("proxiesChecked", ok === results.length ? "success" : "warning", { count: results.length, ok, failed: results.length - ok });
+  } finally {
+    button.disabled = false;
+  }
+});
+
+elements["check-direct"].addEventListener("click", async () => {
+  const button = elements["check-direct"];
+  button.disabled = true;
+  try {
+    const result = await requestJSON("/api/proxies/direct/check", { method: "POST", body: {} });
+    showMessage("directResult", result.ok ? "success" : "warning", { result: proxyCheckText(result).text });
+  } catch (error) {
+    reportError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 elements["proxy-import-form"].addEventListener("submit", async event => {
   event.preventDefault();
@@ -869,14 +1012,18 @@ elements["proxy-import-form"].addEventListener("submit", async event => {
   const button = elements["import-proxies"];
   button.disabled = true;
   const proxies = elements["proxy-import-text"].value;
-  elements["proxy-import-text"].value = "";
   try {
-    const result = await requestJSON("/api/proxies/import", { method: "POST", body: { proxies } });
+    const result = await requestJSON("/api/proxies/import", { method: "POST", body: { proxies, default_scheme: elements["proxy-default-scheme"].value } });
     if (!state.authenticated || generation !== state.generation) return;
+    elements["proxy-import-text"].value = "";
+    updateProxyCount();
     await loadAccounts();
     if (state.authenticated && generation === state.generation) showMessage("proxiesImported", "success", { count: result.imported });
   } catch (error) {
-    if (state.authenticated && generation === state.generation) reportError(error);
+    if (state.authenticated && generation === state.generation) {
+      if (error.code === "invalid_proxy_list") showMessage("proxyImportFailed", "warning", { message: error.message });
+      else reportError(error);
+    }
   } finally {
     button.disabled = false;
   }
@@ -1121,7 +1268,7 @@ elements["refresh-page"].addEventListener("click", async () => {
   if (state.page === "config" && state.config && elements["config-json"].value !== JSON.stringify(state.config.settings || {}, null, 2) && !window.confirm(translate("confirmDiscard"))) return;
   button.disabled = true;
   try {
-    if (state.page === "accounts" || state.page === "tickets") await Promise.all([loadAccounts(), loadStatus()]);
+    if (state.page === "accounts" || state.page === "tickets" || state.page === "proxies") await Promise.all([loadAccounts(), loadStatus()]);
     else if (state.page === "config") await loadConfig();
     else await loadStatus();
     showMessage("pageUpdated", "success");

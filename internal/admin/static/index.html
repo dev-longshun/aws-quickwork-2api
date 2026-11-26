@@ -37,6 +37,7 @@
           <button class="nav-item active" type="button" data-page="overview" aria-current="page"><span aria-hidden="true">◫</span><span class="nav-text" data-i18n="overview">Overview</span></button>
           <button class="nav-item" type="button" data-page="accounts"><span aria-hidden="true">◎</span><span class="nav-text" data-i18n="accounts">Accounts</span></button>
           <button class="nav-item" type="button" data-page="tickets"><span aria-hidden="true">⚿</span><span class="nav-text" data-i18n="authLinks">Authorization links</span></button>
+          <button class="nav-item" type="button" data-page="proxies"><span aria-hidden="true">⇄</span><span class="nav-text" data-i18n="outboundProxies">Outbound proxies</span></button>
           <button class="nav-item" type="button" data-page="config"><span aria-hidden="true">⚙</span><span class="nav-text" data-i18n="settings">Settings</span></button>
           <button class="nav-item" type="button" data-page="playground"><span aria-hidden="true">▷</span><span class="nav-text" data-i18n="playground">Playground</span></button>
         </nav>
@@ -107,15 +108,6 @@
               <div class="table-scroll"><table><thead><tr><th data-i18n="account">Account</th><th data-i18n="providerRegion">Provider / region</th><th data-i18n="status">Status</th><th data-i18n="tokenExpires">Token expires</th><th data-i18n="callsAndDuration">Calls / time</th><th data-i18n="tokensAndCost">Tokens / credits / USD</th><th data-i18n="officialMinutes">Official minutes quota</th><th data-i18n="actions">Actions</th></tr></thead><tbody id="accounts-body"></tbody></table></div>
               <p id="accounts-empty" class="empty-state" data-i18n="noAccounts" hidden>No accounts yet. Connect an upstream account using the sign-in flow below.</p>
             </article>
-            <article class="panel">
-              <div class="panel-heading"><div><h3 data-i18n="outboundProxies">Outbound proxies</h3><p class="muted" data-i18n="proxyImportHint">Import one http:// or socks5:// URL per line. Stored in SQLite; credentials are never returned to the browser.</p></div></div>
-              <form id="proxy-import-form">
-                <label for="proxy-import-text" data-i18n="proxyURLs">Proxy URLs (one per line)</label>
-                <textarea id="proxy-import-text" rows="4" autocomplete="off" spellcheck="false" required></textarea>
-                <button id="import-proxies" class="button primary" type="submit" data-i18n="importProxies">Import proxies</button>
-              </form>
-              <div id="proxy-list" class="proxy-list"></div>
-            </article>
             <p class="field-hint" data-i18n="usageStatisticsHint">Each real upstream attempt, including failures and retries, counts once. Statistics start when recording is enabled; older history is not reconstructed. Token totals use official turn_usage only. Missing quota or cost values mean unknown, not zero.</p>
             <article class="panel">
               <div class="panel-heading"><div><h3 data-i18n="addAccount">Add or reauthenticate an account</h3><p class="muted" data-i18n="addAccountHint">Sign in on the official website. The server exchanges credentials and stores the account.</p></div></div>
@@ -164,6 +156,31 @@
             <article class="panel table-panel">
               <div class="table-scroll"><table><thead><tr><th data-i18n="ticketLabelColumn">Label</th><th data-i18n="status">Status</th><th data-i18n="account">Account</th><th data-i18n="ticketExpiresColumn">Link expires</th><th data-i18n="attemptsLeft">Attempts left</th><th data-i18n="actions">Actions</th></tr></thead><tbody id="tickets-body"></tbody></table></div>
               <p id="tickets-empty" class="empty-state" data-i18n="noTickets" hidden>No authorization links yet.</p>
+            </article>
+          </section>
+
+          <section id="page-proxies" class="page" data-i18n-aria-label="outboundProxies" aria-label="Outbound proxies" hidden>
+            <div class="page-intro"><div><h2 data-i18n="outboundProxies">Outbound proxies</h2><p class="muted" data-i18n="proxiesIntro">Accounts and authorization links can each use a proxy. Bind them on the Accounts page or when generating links.</p></div><div class="toolbar"><button id="check-direct" class="button subtle" type="button" data-i18n="checkDirect">Check server IP</button><button id="check-all-proxies" class="button" type="button" data-i18n="checkAllProxies">Check all</button></div></div>
+            <article class="panel">
+              <div class="panel-heading"><div><h3 data-i18n="batchImportProxies">Batch import</h3><p class="muted" data-i18n="proxyFormatsHint">Same formats as kiro-rs. One per line, or paste a kiro-rs JSON export. Duplicates are skipped; credentials are never sent back to the browser.</p></div></div>
+              <form id="proxy-import-form" class="proxy-import">
+                <pre class="format-examples">socks5://user:pass@1.2.3.4:1080
+user:pass@1.2.3.4:8080
+1.2.3.4:8080:user:pass
+1.2.3.4:8080
+[{"name":"US-1","url":"socks5://1.2.3.4:1080","username":"user","password":"pass"}]</pre>
+                <textarea id="proxy-import-text" rows="6" autocomplete="off" spellcheck="false" required data-i18n-placeholder="proxyPastePlaceholder"></textarea>
+                <div class="import-bar">
+                  <label class="inline-label" for="proxy-default-scheme"><span data-i18n="defaultScheme">Lines without a scheme use</span>
+                    <select id="proxy-default-scheme"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></label>
+                  <span id="proxy-import-count" class="muted"></span>
+                  <button id="import-proxies" class="button primary" type="submit" data-i18n="importProxies">Import proxies</button>
+                </div>
+              </form>
+            </article>
+            <article class="panel table-panel">
+              <div class="table-scroll"><table><thead><tr><th data-i18n="proxyName">Name</th><th data-i18n="proxyAddress">Address</th><th data-i18n="boundAccounts">Bound accounts</th><th data-i18n="exitCheck">Exit IP / latency</th><th data-i18n="actions">Actions</th></tr></thead><tbody id="proxy-list"></tbody></table></div>
+              <p id="proxies-empty" class="empty-state" data-i18n="noProxies" hidden>No proxies yet. Accounts use the server's own network.</p>
             </article>
           </section>
 

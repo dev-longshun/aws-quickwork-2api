@@ -70,6 +70,8 @@ func NewServer(cfg *config.Config, st *store.Store, mgr *accounts.Manager, addrO
 	server.routes.HandleFunc("GET /api/proxies", server.handleProxies)
 	server.routes.HandleFunc("POST /api/proxies/import", server.handleProxyImport)
 	server.routes.HandleFunc("DELETE /api/proxies/{id}", server.handleProxyDelete)
+	server.routes.HandleFunc("PATCH /api/proxies/{id}", server.handleProxyRename)
+	server.routes.HandleFunc("POST /api/proxies/{id}/check", server.handleProxyCheck)
 	server.routes.HandleFunc("PATCH /api/accounts/{id}", server.handleAccountUpdate)
 	server.routes.HandleFunc("DELETE /api/accounts/{id}", server.handleAccountDelete)
 	server.routes.HandleFunc("POST /api/accounts/{id}/refresh", server.handleAccountRefresh)

@@ -266,3 +266,13 @@ tbody tr:last-child td { border-bottom: none; }
 .ticket-new textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 @media (max-width: 760px) { .ticket-grid { grid-template-columns: 1fr; } }
 .ticket-new .button { justify-self: start; }
+
+.format-examples { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--panel-alt); border: 1px dashed var(--border); color: var(--muted); font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; }
+.import-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.import-bar .button { margin-left: auto; }
+.inline-label { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-weight: 500; }
+.inline-label select { width: auto; }
+.check-ok { color: var(--success-text); }
+.check-fail { color: var(--danger); }
+.cell-sub { display: block; color: var(--muted); font-size: 12px; }
+.proxy-import { display: grid; gap: 12px; }
