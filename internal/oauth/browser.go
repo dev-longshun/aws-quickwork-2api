@@ -171,9 +171,9 @@ func submitBrowserCallback(ctx context.Context, flow *loginFlow, callbackURL str
 		location, err := flow.processDiscovery(ctx, params)
 		if err != nil {
 			if statusOf(err) < 500 {
-				return BrowserLoginStatus{}, errors.New("invalid discovery callback parameters")
+				return BrowserLoginStatus{}, &DetailedError{Message: "invalid discovery callback parameters", Cause: err}
 			}
-			return BrowserLoginStatus{}, errors.New("upstream login discovery failed")
+			return BrowserLoginStatus{}, &DetailedError{Message: "upstream login discovery failed", Cause: err}
 		}
 		if !validBrowserEndpoint(location) {
 			return BrowserLoginStatus{}, errors.New("upstream returned an invalid authorize URL")
@@ -191,7 +191,7 @@ func submitBrowserCallback(ctx context.Context, flow *loginFlow, callbackURL str
 		}
 		account, err := flow.completeLogin(ctx, params)
 		if err != nil {
-			return BrowserLoginStatus{}, errors.New("upstream login or account persistence failed; start a new login if the code was consumed")
+			return BrowserLoginStatus{}, &DetailedError{Message: "upstream login or account persistence failed; start a new login if the code was consumed", Cause: err}
 		}
 		return BrowserLoginStatus{Stage: "complete", AccountID: account.ID}, nil
 	case callbackAuthorize:
@@ -234,4 +234,23 @@ func validateBrowserDiscovery(params url.Values) error {
 func validBrowserEndpoint(raw string) bool {
 	endpoint, err := url.Parse(raw)
 	return err == nil && endpoint.Scheme == "https" && endpoint.Hostname() != "" && endpoint.User == nil && endpoint.Opaque == ""
+}
+
+// DetailedError keeps a short public message while carrying the upstream
+// cause for server-side logs. Error() returns only the public message.
+type DetailedError struct {
+	Message string
+	Cause   error
+}
+
+func (e *DetailedError) Error() string { return e.Message }
+func (e *DetailedError) Unwrap() error { return e.Cause }
+
+// ErrorDetail returns the upstream cause of err when it has one.
+func ErrorDetail(err error) string {
+	var detailed *DetailedError
+	if errors.As(err, &detailed) && detailed.Cause != nil {
+		return detailed.Cause.Error()
+	}
+	return ""
 }

@@ -537,6 +537,9 @@ func (s *Server) handleTicketCallback(w http.ResponseWriter, r *http.Request, t 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "callback_failed", err.Error())
 		ev.fail("rejected at stage " + before + ": " + err.Error())
+		if cause := oauth.ErrorDetail(err); cause != "" {
+			ev.Detail += " | upstream: " + cause
+		}
 		return
 	}
 	if status.Stage == "complete" {

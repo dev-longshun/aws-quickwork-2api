@@ -794,8 +794,8 @@ const logZH = {
 function logText(kind, value) {
   if (language !== "zh-CN" || !value) return value || "";
   if (kind === "detail") {
-    const rejected = value.match(/^rejected at stage (\w+): (.*)$/);
-    if (rejected) return `被拒绝（当时在${rejected[1] === "authorize" ? "第 2 步" : "第 1 步"}）：${callbackErrorText({ message: rejected[2] })}`;
+    const rejected = value.match(/^rejected at stage (\w+): (.*?)( \| upstream: (.*))?$/);
+    if (rejected) return `被拒绝（当时在${rejected[1] === "authorize" ? "第 2 步" : "第 1 步"}）：${callbackErrorText({ message: rejected[2] })}${rejected[4] ? `｜上游原始错误：${rejected[4]}` : ""}`;
     for (const [pattern, text] of logZH.details) if (pattern.test(value)) return value.replace(pattern, text);
     return value;
   }
